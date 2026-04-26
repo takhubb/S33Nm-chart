@@ -76,7 +76,7 @@ def normalize_code(series: pd.Series) -> pd.Series:
 
 
 def read_csv(path: Path, date_cols: list[str] | None = None) -> pd.DataFrame:
-    dtype = {"Code": "string", "S33": "string", "Mkt": "string"}
+    dtype = {"Code": "string", "S17": "string", "S33": "string", "Mkt": "string"}
     kwargs = {"dtype": dtype, "low_memory": False}
     if date_cols:
         kwargs["parse_dates"] = date_cols
@@ -160,9 +160,9 @@ def fetch_master(
 
     df = cached_csv(cache, fetch, date_cols=["Date"], refresh=refresh)
     df["Code"] = normalize_code(df["Code"])
-    for col in ["S33", "Mkt"]:
+    for col in ["S17", "S33", "Mkt"]:
         df[col] = df[col].astype("string")
-    keep = ["Code", "CoName", "S33", "S33Nm", "Mkt", "MktNm"]
+    keep = ["Code", "CoName", "S17", "S17Nm", "S33", "S33Nm", "Mkt", "MktNm"]
     return df[keep].drop_duplicates("Code")
 
 
@@ -228,6 +228,8 @@ def build_group_index(
     work = work.dropna(subset=[price_col, group_col, name_col])
     if allowed_codes is not None:
         work = work[work[group_col].isin(allowed_codes)]
+    elif group_col == "S17":
+        work = work[(work["S17"] != "99") & (work["S17Nm"] != "その他")]
     elif group_col == "S33":
         work = work[(work["S33"] != "9999") & (work["S33Nm"] != "その他")]
 
@@ -608,6 +610,14 @@ def main() -> None:
         price_col=args.price_column,
         group_agg=args.group_agg,
     )
+    topix17 = build_group_index(
+        weekly_bars,
+        master,
+        group_col="S17",
+        name_col="S17Nm",
+        price_col=args.price_column,
+        group_agg=args.group_agg,
+    )
     market = build_group_index(
         weekly_bars,
         master,
@@ -619,17 +629,27 @@ def main() -> None:
     )
 
     industry_chart, industry_start = add_topix_and_normalize(industry, topix_weekly, name_col="S33Nm")
+    topix17_chart, topix17_start = add_topix_and_normalize(topix17, topix_weekly, name_col="S17Nm")
     market_chart, market_start = add_topix_and_normalize(market, topix_weekly, name_col="MktNm")
 
     industry_chart.to_csv(args.data_dir / "industry_relative_weekly.csv", index_label="Date")
+    topix17_chart.to_csv(args.data_dir / "topix17_relative_weekly.csv", index_label="Date")
     market_chart.to_csv(args.data_dir / "market_relative_weekly.csv", index_label="Date")
     industry.to_csv(args.data_dir / "industry_group_index_raw.csv", index=False)
+    topix17.to_csv(args.data_dir / "topix17_group_index_raw.csv", index=False)
     market.to_csv(args.data_dir / "market_group_index_raw.csv", index=False)
 
     plot_combined_index(
         industry_chart,
         args.chart_dir / "industry_relative_weekly.png",
         title=f"業種別 週次相対チャート + TOPIX ({industry_start.date()}=100)",
+        legend_columns=1,
+        wide=True,
+    )
+    plot_combined_index(
+        topix17_chart,
+        args.chart_dir / "topix17_relative_weekly.png",
+        title=f"TOPIX-17業種別 週次相対チャート + TOPIX ({topix17_start.date()}=100)",
         legend_columns=1,
         wide=True,
     )
@@ -654,6 +674,7 @@ def main() -> None:
 
     print("created:", flush=True)
     print(f"  {args.chart_dir / 'industry_relative_weekly.png'}", flush=True)
+    print(f"  {args.chart_dir / 'topix17_relative_weekly.png'}", flush=True)
     print(f"  {args.chart_dir / 'market_relative_weekly.png'}", flush=True)
     print(f"  {len(per_pbr_paths)} PER/PBR charts under {args.chart_dir / 'sector_per_pbr'}", flush=True)
     print(f"  CSV files under {args.data_dir}", flush=True)
